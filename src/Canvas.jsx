@@ -85,10 +85,8 @@ const Canvas = ({ user }) => {
   };
 
 const finalizeCanvas = async () => {
-  if (!user) return;
-
-  if (!canvasRef.current) {
-    console.error('Canvas reference is undefined.');
+  if (!user || !canvasRef.current) {
+    console.error('User is not logged in or canvas reference is undefined.');
     return;
   }
 
@@ -96,25 +94,29 @@ const finalizeCanvas = async () => {
   onValue(canvasDataRef, async (snapshot) => {
     const canvasData = snapshot.val();
     if (canvasData && canvasData.createdBy === user.uid) {
+      // Ensure this gets lines related to the current canvas
+      const currentLines = await getCurrentLines(`canvases/${canvasId}/lines`);
+      
+      // Redraw the canvas with these lines
       const context = canvasRef.current.getContext('2d');
+      redraw(context, currentLines);
 
-      context.fillStyle = '#e6e6e6';
-      context.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-      redraw(context, await getCurrentLines());
+      // Convert canvas to Blob after ensuring redraw is complete
+      setTimeout(() => {
+        canvasRef.current.toBlob(async (blob) => {
+          const fileRef = storageRef(storage, `paintings/${user.uid}/${new Date().toISOString()}.jpg`);
+          await uploadBytes(fileRef, blob);
+          const fileURL = await getDownloadURL(fileRef);
+          console.log("Saved painting URL:", fileURL);
 
-      canvasRef.current.toBlob(async (blob) => {
-        const fileRef = storageRef(storage, `paintings/${user.uid}/${new Date().toISOString()}.jpg`);
-        await uploadBytes(fileRef, blob);
-        const fileURL = await getDownloadURL(fileRef);
-        console.log("Saved painting URL:", fileURL);
-
-        clearCanvas();
-        clearLines();
-        await set(ref(database, `canvases/${canvasId}/lines`), null);
-        await set(canvasDataRef, null);
-
-        navigate('/');
-      }, 'image/jpeg');
+          // Consider clearing the canvas and lines after ensuring the blob has been saved
+          clearCanvas();
+          clearLines();
+          await set(ref(database, `canvases/${canvasId}/lines`), null);
+          await set(canvasDataRef, null);
+          navigate('/');
+        }, 'image/jpeg');
+      }, 100); // A short delay to ensure redraw completes
     } else {
       alert("You're not authorized to finalize this canvas.");
     }
@@ -123,18 +125,19 @@ const finalizeCanvas = async () => {
   });
 };
 
-  const getCurrentLines = async () => {
-    return new Promise((resolve) => {
-      const dbRef = ref(database, 'lines/shared');
-      onValue(dbRef, (snapshot) => {
-        const data = snapshot.val();
-        const loadedLines = data ? Object.values(data) : [];
-        resolve(loadedLines);
-      }, {
-        onlyOnce: true
-      });
+const getCurrentLines = async (path) => {
+  return new Promise((resolve) => {
+    const dbRef = ref(database, path);
+    onValue(dbRef, (snapshot) => {
+      const data = snapshot.val();
+      const loadedLines = data ? Object.values(data) : [];
+      resolve(loadedLines);
+    }, {
+      onlyOnce: true
     });
-  };
+  });
+};
+
 
   const clearLines = () => {
     const dbRef = ref(database, 'lines/shared');
@@ -157,7 +160,7 @@ const finalizeCanvas = async () => {
         <input className='color-picker' type="color" value={color} onChange={(e) => setColor(e.target.value)} />
         <input className='brush-size' type="range" min="1" max="50" value={brushSize} onChange={(e) => setBrushSize(e.target.value)} style={{ margin: '0 10px' }} />
         <button onClick={finalizeCanvas}>Finalize Painting</button>
-        <button onClick={() => navigate('/')}>Back to List</button>
+        <button className='back-btn' onClick={() => navigate('/')}>Back to List</button>
       </div>
     </>
   );
